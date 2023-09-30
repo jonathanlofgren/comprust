@@ -12,5 +12,11 @@ fn main() {
     let file_path = &args[1];
     let contents = fs::read_to_string(file_path).expect("Failed to read file");
 
-    dbg!(huffman::count_chars(&contents));
+    let mut byte_buffer = Vec::new();
+
+    let num_bits = huffman::encode(&contents, &mut byte_buffer).expect("failed to encode");
+
+    println!("=> Raw: {} bytes", contents.as_bytes().len());
+    println!("=> Compressed: {} bytes", byte_buffer.len());
+    println!("=> Compressed: {} bits", num_bits);
 }
