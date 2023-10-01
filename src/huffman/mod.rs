@@ -6,12 +6,12 @@ use std::iter;
 mod tree;
 use self::tree::{HuffmanTree, Link};
 
-pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<usize> {
-    let tree = tree::build_huffman_tree(text).expect("Failed to build huffman tree.");
+pub fn encode<W: Write + Seek>(text: &str, writer: &mut W) -> Result<u64> {
+    let tree = HuffmanTree::build(text).expect("Failed to build huffman tree.");
     let dict = build_dictionary(tree);
     let mut data = encode_with_dictionary(text, &dict);
 
-    let num_bits = data.len();
+    let num_bits = data.len() as u64;
     let pad = if num_bits % 8 > 0 {
         8 - (num_bits % 8)
     } else {
@@ -19,7 +19,7 @@ pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<usize> {
     };
 
     // Pad with 1's to reach even number of bytes
-    data.extend(iter::repeat(true).take(pad));
+    data.extend(iter::repeat(true).take(pad.try_into().unwrap()));
 
     // Convert the bitvec to bytes
     // TODO: This is all in memory right now which is not good
@@ -29,8 +29,8 @@ pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<usize> {
     // Should be nothing left in data
     assert!(data.is_empty());
 
-    // Now write it to the given Writer
-    writer.write_all(&buffer)?;
+    writer.write(&num_bits.to_be_bytes())?; //  First write the number of bits that are in the encoding
+    writer.write_all(&buffer)?; //              Then write the buffer
 
     Ok(num_bits)
 }
@@ -70,6 +70,8 @@ fn build_dictionary(tree: HuffmanTree) -> HashMap<char, BitVec> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
     use crate::huffman::tree::tests::build_correct_tree;
 
@@ -127,13 +129,14 @@ mod tests {
     // ======================
     // buffer = [80, 255]
     // num_bits = 10
+    // Then the 10 as 8 bytes just before that, for the number of bits after to read
     #[test]
     fn test_encode_simple_string() {
-        let mut writer = Vec::new();
+        let mut writer = Cursor::new(Vec::new());
 
         let result = encode("aaaabbc", &mut writer).expect("failed");
 
         assert_eq!(result, 10);
-        assert_eq!(writer, vec![80, 255]);
+        assert_eq!(writer.get_ref(), &vec![0, 0, 0, 0, 0, 0, 0, 10, 80, 255]);
     }
 }

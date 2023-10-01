@@ -1,27 +1,34 @@
 use std::collections::{BinaryHeap, HashMap};
 
-pub fn build_huffman_tree(text: &str) -> Option<HuffmanTree> {
-    let counts = count_chars(text);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HuffmanTree {
+    pub root: Link,
+}
 
-    // Insert the leaf nodes with the character counts in the heap
-    let mut heap = BinaryHeap::new();
-    for (ch, weight) in counts {
-        heap.push(Link::Leaf(weight, ch))
+impl HuffmanTree {
+    pub fn build(text: &str) -> Option<Self> {
+        let counts = count_chars(text);
+
+        // Insert the leaf nodes with the character counts in the heap
+        let mut heap = BinaryHeap::new();
+        for (ch, weight) in counts {
+            heap.push(Link::Leaf(weight, ch))
+        }
+
+        // Build the tree
+        while heap.len() > 1 {
+            let right = heap.pop().unwrap();
+            let left = heap.pop().unwrap();
+
+            heap.push(Link::Node(Box::new(Node {
+                weight: left.weight() + right.weight(),
+                left: left,
+                right: right,
+            })))
+        }
+
+        heap.pop().map(|link| HuffmanTree { root: link }) // This may be None in the case of an empty string input
     }
-
-    // Build the tree
-    while heap.len() > 1 {
-        let right = heap.pop().unwrap();
-        let left = heap.pop().unwrap();
-
-        heap.push(Link::Node(Box::new(Node {
-            weight: left.weight() + right.weight(),
-            left: left,
-            right: right,
-        })))
-    }
-
-    heap.pop().map(|link| HuffmanTree { root: link }) // This may be None in the case of an empty string input
 }
 
 fn count_chars(source: &str) -> HashMap<char, i32> {
@@ -29,11 +36,6 @@ fn count_chars(source: &str) -> HashMap<char, i32> {
         *map.entry(c).or_insert(0) += 1;
         map
     })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HuffmanTree {
-    pub root: Link,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,18 +91,18 @@ pub mod tests {
         let expected = build_correct_tree();
         let text = "aaaaaaaaaaaaaaabbbbbbbccccccdddddeeee";
 
-        assert_eq!(build_huffman_tree(text), Option::Some(expected));
+        assert_eq!(HuffmanTree::build(text), Option::Some(expected));
     }
 
     #[test]
     fn test_build_huffman_tree_for_edge_cases() {
         assert_eq!(
-            build_huffman_tree("a"),
+            HuffmanTree::build("a"),
             Option::Some(HuffmanTree {
                 root: Link::Leaf(1, 'a')
             })
         );
-        assert_eq!(build_huffman_tree(""), None);
+        assert_eq!(HuffmanTree::build(""), None);
     }
 
     #[test]
