@@ -1,7 +1,6 @@
 use bitvec::prelude::*;
 use std::collections::HashMap;
 use std::io::{prelude::*, Result};
-use std::iter;
 
 mod tree;
 use self::tree::{HuffmanTree, Link};
@@ -19,7 +18,7 @@ pub fn encode<W: Write + Seek>(text: &str, writer: &mut W) -> Result<u64> {
     };
 
     // Pad with 1's to reach a full number of bytes
-    data.extend(iter::repeat(true).take(pad));
+    data.extend(vec![true; pad]);
 
     // Convert the bitvec to bytes
     // TODO: This is all in memory right now which is not good
@@ -29,8 +28,8 @@ pub fn encode<W: Write + Seek>(text: &str, writer: &mut W) -> Result<u64> {
     // Should be nothing left in data
     assert!(data.is_empty());
 
-    writer.write(&[pad.try_into().unwrap()])?; //       First write how many useless bits were padded at the end
-    writer.write_all(&buffer)?; //  Then write the buffer
+    writer.write_all(&[pad.try_into().unwrap()])?; //   First write how many useless bits were padded at the end
+    writer.write_all(&buffer)?; //                      Then write the buffer
 
     Ok(num_bits as u64)
 }

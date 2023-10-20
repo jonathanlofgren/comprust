@@ -34,8 +34,8 @@ impl HuffmanTree {
             heap.push(Link::Node(
                 Box::new(Node {
                     weight: left.weight() + right.weight(),
-                    left: left,
-                    right: right,
+                    left,
+                    right,
                 }),
                 char,
             ))
