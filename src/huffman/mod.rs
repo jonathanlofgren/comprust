@@ -3,11 +3,15 @@ use std::collections::HashMap;
 use std::io::{prelude::*, Result};
 
 mod tree;
+use crate::types::Serializable;
+
 use self::tree::{HuffmanTree, Link};
 
-pub fn encode<W: Write + Seek>(text: &str, writer: &mut W) -> Result<u64> {
+// Encodes the text data using Huffman coding and writes it into the writer
+// Returns the number of bits
+pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
     let tree = HuffmanTree::from(text).expect("Failed to build huffman tree.");
-    let dict = build_dictionary(tree);
+    let dict = build_dictionary(&tree);
     let mut data = encode_with_dictionary(text, &dict);
 
     let num_bits = data.len();
@@ -28,10 +32,18 @@ pub fn encode<W: Write + Seek>(text: &str, writer: &mut W) -> Result<u64> {
     // Should be nothing left in data
     assert!(data.is_empty());
 
+    // TODO: write the tree as well
+    tree.serialize(writer)?;
+
     writer.write_all(&[pad.try_into().unwrap()])?; //   First write how many useless bits were padded at the end
     writer.write_all(&buffer)?; //                      Then write the buffer
 
     Ok(num_bits as u64)
+}
+
+// TODO
+pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize> {
+    unimplemented!()
 }
 
 // TODO: return Vec<u8> instead
@@ -42,14 +54,14 @@ fn encode_with_dictionary(text: &str, dict: &HashMap<char, BitVec>) -> BitVec {
 }
 
 /// Depth first search to find the codes for each leaf node
-fn build_dictionary(tree: HuffmanTree) -> HashMap<char, BitVec> {
-    let mut frontier = vec![(tree.root, bitvec![])];
+fn build_dictionary(tree: &HuffmanTree) -> HashMap<char, BitVec> {
+    let mut frontier = vec![(&tree.root, bitvec![])];
     let mut codes = HashMap::new();
 
     while let Some((link, code)) = frontier.pop() {
         match link {
             Link::Leaf(_, ch) => {
-                codes.insert(ch, code);
+                codes.insert(*ch, code);
             }
             Link::Node(node, _) => {
                 let mut left_code = code.clone();
@@ -58,8 +70,8 @@ fn build_dictionary(tree: HuffmanTree) -> HashMap<char, BitVec> {
                 let mut right_code = code.clone();
                 right_code.push(true);
 
-                frontier.push((node.left, left_code));
-                frontier.push((node.right, right_code));
+                frontier.push((&node.left, left_code));
+                frontier.push((&node.right, right_code));
             }
         };
     }
@@ -69,17 +81,15 @@ fn build_dictionary(tree: HuffmanTree) -> HashMap<char, BitVec> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use super::*;
     use crate::huffman::tree::tests::build_correct_tree;
 
     #[test]
-    fn test_build_dictionary() {
+    fn builds_correct_dictionary_from_tree() {
         let tree = build_correct_tree();
 
         assert_eq!(
-            build_dictionary(tree),
+            build_dictionary(&tree),
             HashMap::from([
                 ('a', bitvec![1]),
                 ('b', bitvec![0, 0, 0]),
@@ -91,8 +101,8 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_with_dictionary() {
-        let dict = build_dictionary(build_correct_tree());
+    fn encodes_correctly_with_dictionary() {
+        let dict = build_dictionary(&build_correct_tree());
 
         assert_eq!(
             encode_with_dictionary("aabcd", &dict),
@@ -128,14 +138,22 @@ mod tests {
     // ======================
     // buffer = [80, 255]
     // num_bits = 10
-    // Then the padding=6 as 1 bytes just before that
+    // Then the padding amount=6 bits as 1 byte just before that
+    //
+    // Then we have the actual huffman tree before that
     #[test]
-    fn test_encode_simple_string() {
-        let mut writer = Cursor::new(Vec::new());
+    fn encodes_simple_string_to_correct_buffer() {
+        let mut writer = Vec::new();
 
         let result = encode("aaaabbc", &mut writer).expect("failed");
 
         assert_eq!(result, 10);
-        assert_eq!(writer.get_ref(), &vec![6, 80, 255]);
+        assert_eq!(
+            &writer,
+            &vec![0, 0, 0, 3, 97, 98, 99, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 1, 6, 80, 255]
+        );
     }
+
+    #[test]
+    fn encodes_and_then_decodes_to_same_input() {}
 }

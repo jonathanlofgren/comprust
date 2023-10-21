@@ -50,7 +50,11 @@ impl HuffmanTree {
 
 impl Serializable for HuffmanTree {
     fn serialize<W: Write>(&self, writer: &mut W) -> Result<usize> {
-        let chars: String = self.counts.keys().map(|c| c.to_owned()).collect();
+        let chars: String = {
+            let mut chars: Vec<&char> = self.counts.keys().collect();
+            chars.sort();
+            chars.into_iter().collect()
+        };
         let counts: Vec<_> = chars.chars().map(|c| self.counts[&c]).collect();
         let chars_num_bytes = chars.as_bytes().len() as u32;
 
@@ -162,7 +166,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_build_huffman_tree_for_simple_case() {
+    fn build_huffman_tree_for_simple_case() {
         let expected = build_correct_tree();
         let text = "aaaaaaaaaaaaaaabbbbbbbccccccdddddeeee";
 
@@ -170,7 +174,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_build_huffman_tree_for_edge_cases() {
+    fn build_huffman_tree_for_edge_cases() {
         assert_eq!(
             HuffmanTree::from("a"),
             Option::Some(HuffmanTree {
@@ -182,7 +186,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_build_from_counts_is_determinsitic() {
+    fn build_from_counts_is_determinsitic() {
         // Recreate the counts every time and make sure it always results in the same tree
         let get_counts = || (b'a'..=b'z').map(|b| (b as char, 100)).collect();
         let tree = HuffmanTree::from_counts(&get_counts()).unwrap();
@@ -193,7 +197,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_can_sort_links() {
+    fn can_sort_links() {
         let d = Link::Leaf(3, 'd');
         let e = Link::Leaf(5, 'e');
         let de = Link::Node(
@@ -212,7 +216,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_can_serialize_and_deserialize_to_eq_object() {
+    fn can_serialize_and_deserialize_to_eq_object() {
         let original = build_correct_tree();
         let mut buffer = Vec::<u8>::new();
 
