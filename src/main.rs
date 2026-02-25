@@ -67,7 +67,7 @@ fn resolve_codec(name: &str) -> Box<dyn Codec> {
     match codec::get_codec(name) {
         Some(c) => c,
         None => {
-            eprintln!("Unknown algorithm: '{}'. Available: huffman", name);
+            eprintln!("Unknown algorithm: '{}'. Available: huffman, rle", name);
             process::exit(1);
         }
     }
@@ -82,6 +82,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  -a, --algorithm <name>    Compression algorithm (default: huffman)");
+    eprintln!("                            Available: huffman, rle");
 }
 
 fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
