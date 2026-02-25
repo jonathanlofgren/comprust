@@ -12,7 +12,7 @@ pub struct HuffmanTree {
 }
 
 impl HuffmanTree {
-    pub fn from(text: &str) -> Option<Self> {
+    pub fn build(text: &str) -> Option<Self> {
         let counts = count_chars(text);
 
         Self::from_counts(&counts)
@@ -82,18 +82,16 @@ impl Serializable for HuffmanTree {
         // Read the characters as a String
         let mut char_buffer = vec![0; num_bytes];
         reader.read_exact(&mut char_buffer)?;
-        let chars = String::from_utf8(char_buffer).unwrap();
+        let chars = String::from_utf8(char_buffer)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
 
-        // Over each characters in the string, read the count and collect to the HashMap
-        let counts: HashMap<char, u32> = chars
-            .chars()
-            .map(|c| {
-                let mut count_buffer = [0; 4];
-                reader.read_exact(&mut count_buffer).unwrap();
-
-                (c, u32::from_be_bytes(count_buffer))
-            })
-            .collect();
+        // Over each character in the string, read the count and collect to the HashMap
+        let mut counts = HashMap::new();
+        for c in chars.chars() {
+            let mut count_buffer = [0; 4];
+            reader.read_exact(&mut count_buffer)?;
+            counts.insert(c, u32::from_be_bytes(count_buffer));
+        }
 
         HuffmanTree::from_counts(&counts).ok_or(Error::new(
             ErrorKind::Other,
@@ -170,19 +168,19 @@ pub mod tests {
         let expected = build_correct_tree();
         let text = "aaaaaaaaaaaaaaabbbbbbbccccccdddddeeee";
 
-        assert_eq!(HuffmanTree::from(text), Option::Some(expected));
+        assert_eq!(HuffmanTree::build(text), Option::Some(expected));
     }
 
     #[test]
     fn build_huffman_tree_for_edge_cases() {
         assert_eq!(
-            HuffmanTree::from("a"),
+            HuffmanTree::build("a"),
             Option::Some(HuffmanTree {
                 root: Link::Leaf(1, 'a'),
                 counts: HashMap::from([('a', 1)])
             })
         );
-        assert_eq!(HuffmanTree::from(""), None);
+        assert_eq!(HuffmanTree::build(""), None);
     }
 
     #[test]

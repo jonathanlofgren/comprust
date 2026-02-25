@@ -1,7 +1,6 @@
 use bitvec::prelude::*;
 use std::collections::HashMap;
 use std::io::{prelude::*, Result};
-use std::ops::Deref;
 
 mod tree;
 use crate::types::Serializable;
@@ -12,7 +11,7 @@ use self::tree::{HuffmanTree, Link};
 // Returns the number of bits
 // TODO: probably should return the number of bytes written instead
 pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
-    let tree = HuffmanTree::from(text).expect("Failed to build huffman tree.");
+    let tree = HuffmanTree::build(text).expect("Failed to build huffman tree.");
     let dict = build_dictionary(&tree);
     let mut data = encode_with_dictionary(text, &dict);
 
@@ -32,7 +31,7 @@ pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
     data.read_to_end(&mut buffer)?;
 
     // Should be nothing left in data
-    assert!(data.is_empty());
+    debug_assert!(data.is_empty());
 
     tree.serialize(writer)?;
     writer.write_all(&[pad.try_into().unwrap()])?; //   First write how many useless bits were padded at the end
@@ -60,19 +59,18 @@ pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize
         BitVec::<_, Lsb0>::from_vec(buffer)
     };
 
-    dbg!(&tree);
-
     // Then walk bit by bit and keep track of where we are
     // As soon as we hit a leaf node
     // Output that character to writer
     // Make sure the padded 1-bits at the end to reach a full byte are ignored
     let num_data_bits = bits.len() - bits_padded;
     let mut current = &tree.root;
+    let mut bytes_written: usize = 0;
 
     for b in &bits[0..num_data_bits] {
         if let Link::Leaf(_, char) = current {
             // We are at a leaf node, just output the character (as bytes)
-            write_char(writer, char)?;
+            bytes_written += write_char(writer, char)?;
 
             // Hop back to the root of the tree
             current = &tree.root;
@@ -91,19 +89,25 @@ pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize
     // Now after the final bit we should be at a leaf,
     // otherwise something is really wrong with the code
     match current {
-        Link::Leaf(_, char) => write_char(writer, char)?,
-        Link::Node(_, _) => panic!("Invalid code"),
+        Link::Leaf(_, char) => {
+            bytes_written += write_char(writer, char)?;
+        }
+        Link::Node(_, _) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Unexpected end of data: stopped at internal node instead of leaf",
+            ));
+        }
     }
 
-    Ok(1)
+    Ok(bytes_written)
 }
 
-// TODO: this is obviously really stupid
-fn write_char<W: Write>(writer: &mut W, char: &char) -> Result<()> {
-    let char_as_string = char.to_string();
-    let bytes = char_as_string.as_bytes();
-
-    writer.write_all(bytes)
+fn write_char<W: Write>(writer: &mut W, ch: &char) -> Result<usize> {
+    let mut buf = [0; 4];
+    let bytes = ch.encode_utf8(&mut buf).as_bytes();
+    writer.write_all(bytes)?;
+    Ok(bytes.len())
 }
 
 // TODO: return Vec<u8> instead
@@ -184,7 +188,6 @@ mod tests {
     //    4a / \
     //      2b  1c
     //
-    //  Codes
     //  a: 0
     //  b: 10
     //  c: 11
@@ -221,11 +224,10 @@ mod tests {
         let mut decode_buffer: Vec<u8> = Vec::new();
 
         // Encode the test into encode_buffer
-        let bytes = encode(text, &mut encode_buffer).expect("Failed to encode");
+        encode(text, &mut encode_buffer).expect("Failed to encode");
 
         // Decode back into the decode_buffer
-        let something =
-            decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
+        decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
 
         assert_eq!(
             String::from_utf8(decode_buffer)
