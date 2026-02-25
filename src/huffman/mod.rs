@@ -1,22 +1,33 @@
 use bitvec::prelude::*;
 use std::collections::HashMap;
 use std::io::{prelude::*, Result};
-use std::ops::Deref;
 
 mod tree;
-use crate::types::Serializable;
 
-use self::tree::{HuffmanTree, Link};
+use self::tree::{HuffmanTree, Link, Serializable};
 
-// Encodes the text data using Huffman coding and writes it into the writer
-// Returns the number of bits
-// TODO: probably should return the number of bytes written instead
-pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
-    let tree = HuffmanTree::from(text).expect("Failed to build huffman tree.");
+pub struct HuffmanCodec;
+
+impl crate::codec::Codec for HuffmanCodec {
+    fn encode(&self, data: &[u8], writer: &mut dyn Write) -> Result<u64> {
+        encode(data, writer)
+    }
+
+    fn decode(&self, reader: &mut dyn Read, writer: &mut dyn Write) -> Result<usize> {
+        decode(reader, writer)
+    }
+}
+
+// Encodes the data using Huffman coding and writes it into the writer.
+// Returns the number of bits in the compressed payload (excluding header/padding).
+pub fn encode<W: Write + ?Sized>(data: &[u8], writer: &mut W) -> Result<u64> {
+    let tree = HuffmanTree::build(data).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "cannot encode empty input")
+    })?;
     let dict = build_dictionary(&tree);
-    let mut data = encode_with_dictionary(text, &dict);
+    let mut bits = encode_with_dictionary(data, &dict);
 
-    let num_bits = data.len();
+    let num_bits = bits.len();
     let pad = if num_bits % 8 > 0 {
         8 - (num_bits % 8)
     } else {
@@ -24,24 +35,23 @@ pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
     };
 
     // Pad with 1's to reach a full number of bytes
-    data.extend(vec![true; pad]);
+    bits.extend(vec![true; pad]);
 
     // Convert the bitvec to bytes
-    // TODO: This is all in memory right now which is not good
     let mut buffer = vec![];
-    data.read_to_end(&mut buffer)?;
+    bits.read_to_end(&mut buffer)?;
 
-    // Should be nothing left in data
-    assert!(data.is_empty());
+    // Should be nothing left in bits
+    debug_assert!(bits.is_empty());
 
     tree.serialize(writer)?;
-    writer.write_all(&[pad.try_into().unwrap()])?; //   First write how many useless bits were padded at the end
-    writer.write_all(&buffer)?; //                      Then write the buffer
+    writer.write_all(&[pad as u8])?; // First write how many useless bits were padded at the end
+    writer.write_all(&buffer)?; //      Then write the compressed data
 
     Ok(num_bits as u64)
 }
 
-pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize> {
+pub fn decode<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut W) -> Result<usize> {
     // First read in the huffman tree
     let tree = HuffmanTree::deserialize(reader)?;
 
@@ -60,68 +70,58 @@ pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize
         BitVec::<_, Lsb0>::from_vec(buffer)
     };
 
-    dbg!(&tree);
-
-    // Then walk bit by bit and keep track of where we are
-    // As soon as we hit a leaf node
-    // Output that character to writer
-    // Make sure the padded 1-bits at the end to reach a full byte are ignored
+    // Walk bit by bit through the tree. Navigate on each bit, and whenever
+    // we land on a leaf, output that byte and hop back to the root.
+    // Make sure the padded 1-bits at the end to reach a full byte are ignored.
     let num_data_bits = bits.len() - bits_padded;
     let mut current = &tree.root;
+    let mut bytes_written: usize = 0;
+    let mut at_root = true;
 
     for b in &bits[0..num_data_bits] {
-        if let Link::Leaf(_, char) = current {
-            // We are at a leaf node, just output the character (as bytes)
-            write_char(writer, char)?;
-
-            // Hop back to the root of the tree
-            current = &tree.root;
-        }
-
-        if let Link::Node(node, _) = current {
-            match *b {
-                // Go right
-                true => current = &node.right,
-                // Go left
-                false => current = &node.left,
+        match current {
+            Link::Node(node, _) => {
+                current = if *b { &node.right } else { &node.left };
+                at_root = false;
             }
+            // Single-byte alphabet: root is a leaf, each bit represents one byte
+            Link::Leaf(_, _) => {}
+        }
+
+        if let Link::Leaf(_, byte) = current {
+            writer.write_all(&[*byte])?;
+            bytes_written += 1;
+            current = &tree.root;
+            at_root = true;
         }
     }
 
-    // Now after the final bit we should be at a leaf,
-    // otherwise something is really wrong with the code
-    match current {
-        Link::Leaf(_, char) => write_char(writer, char)?,
-        Link::Node(_, _) => panic!("Invalid code"),
+    if !at_root {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Unexpected end of data: stopped at internal node instead of leaf",
+        ));
     }
 
-    Ok(1)
+    Ok(bytes_written)
 }
 
-// TODO: this is obviously really stupid
-fn write_char<W: Write>(writer: &mut W, char: &char) -> Result<()> {
-    let char_as_string = char.to_string();
-    let bytes = char_as_string.as_bytes();
-
-    writer.write_all(bytes)
-}
-
-// TODO: return Vec<u8> instead
-fn encode_with_dictionary(text: &str, dict: &HashMap<char, BitVec>) -> BitVec {
-    let bits: BitVec = text.chars().flat_map(|c| dict[&c].clone()).collect();
-
-    bits
+fn encode_with_dictionary(data: &[u8], dict: &HashMap<u8, BitVec>) -> BitVec {
+    data.iter().flat_map(|b| dict[b].clone()).collect()
 }
 
 /// Depth first search to find the codes for each leaf node
-fn build_dictionary(tree: &HuffmanTree) -> HashMap<char, BitVec> {
+fn build_dictionary(tree: &HuffmanTree) -> HashMap<u8, BitVec> {
     let mut frontier = vec![(&tree.root, bitvec![])];
     let mut codes = HashMap::new();
 
     while let Some((link, code)) = frontier.pop() {
         match link {
-            Link::Leaf(_, ch) => {
-                codes.insert(*ch, code);
+            Link::Leaf(_, byte) => {
+                // If the root itself is a leaf (single unique byte), assign
+                // a 1-bit code so each occurrence actually produces output.
+                let code = if code.is_empty() { bitvec![0] } else { code };
+                codes.insert(*byte, code);
             }
             Link::Node(node, _) => {
                 let mut left_code = code.clone();
@@ -151,11 +151,11 @@ mod tests {
         assert_eq!(
             build_dictionary(&tree),
             HashMap::from([
-                ('a', bitvec![1]),
-                ('b', bitvec![0, 0, 0]),
-                ('c', bitvec![0, 0, 1]),
-                ('d', bitvec![0, 1, 0]),
-                ('e', bitvec![0, 1, 1]),
+                (b'a', bitvec![1]),
+                (b'b', bitvec![0, 0, 0]),
+                (b'c', bitvec![0, 0, 1]),
+                (b'd', bitvec![0, 1, 0]),
+                (b'e', bitvec![0, 1, 1]),
             ])
         )
     }
@@ -165,12 +165,12 @@ mod tests {
         let dict = build_dictionary(&build_correct_tree());
 
         assert_eq!(
-            encode_with_dictionary("aabcd", &dict),
+            encode_with_dictionary(b"aabcd", &dict),
             bitvec![1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0]
         );
-        assert_eq!(encode_with_dictionary("", &dict), bitvec![]);
+        assert_eq!(encode_with_dictionary(b"", &dict), bitvec![]);
         assert_eq!(
-            encode_with_dictionary("ee", &dict),
+            encode_with_dictionary(b"ee", &dict),
             bitvec![0, 1, 1, 0, 1, 1]
         );
     }
@@ -184,7 +184,6 @@ mod tests {
     //    4a / \
     //      2b  1c
     //
-    //  Codes
     //  a: 0
     //  b: 10
     //  c: 11
@@ -202,10 +201,10 @@ mod tests {
     //
     // Then we have the actual huffman tree before that
     #[test]
-    fn encodes_simple_string_to_correct_buffer() {
+    fn encodes_simple_data_to_correct_buffer() {
         let mut buffer = Vec::new();
 
-        let result = encode("aaaabbc", &mut buffer).expect("failed");
+        let result = encode(b"aaaabbc", &mut buffer).expect("failed");
 
         assert_eq!(result, 10);
         assert_eq!(
@@ -216,21 +215,37 @@ mod tests {
 
     #[test]
     fn encodes_and_then_decodes_to_same_input() {
-        let text = "aaaabbc";
+        let data = b"aaaabbc";
         let mut encode_buffer: Vec<u8> = Vec::new();
         let mut decode_buffer: Vec<u8> = Vec::new();
 
-        // Encode the test into encode_buffer
-        let bytes = encode(text, &mut encode_buffer).expect("Failed to encode");
+        encode(data, &mut encode_buffer).expect("Failed to encode");
+        decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
 
-        // Decode back into the decode_buffer
-        let something =
-            decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
+        assert_eq!(decode_buffer, data);
+    }
 
-        assert_eq!(
-            String::from_utf8(decode_buffer)
-                .expect("Failed to create text data from decoded data, probably invalid utf8"),
-            text
-        );
+    #[test]
+    fn encodes_and_decodes_single_byte_alphabet() {
+        let data = b"aaa";
+        let mut encode_buffer: Vec<u8> = Vec::new();
+        let mut decode_buffer: Vec<u8> = Vec::new();
+
+        encode(data, &mut encode_buffer).expect("Failed to encode");
+        decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
+
+        assert_eq!(decode_buffer, data);
+    }
+
+    #[test]
+    fn encodes_and_decodes_binary_data() {
+        let data: Vec<u8> = (0..=255).cycle().take(1000).collect();
+        let mut encode_buffer: Vec<u8> = Vec::new();
+        let mut decode_buffer: Vec<u8> = Vec::new();
+
+        encode(&data, &mut encode_buffer).expect("Failed to encode");
+        decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
+
+        assert_eq!(decode_buffer, data);
     }
 }
