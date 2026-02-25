@@ -1,6 +1,6 @@
 use std::{env, fs, process};
 
-use comprust::huffman;
+use comprust::codec::{self, Codec, DEFAULT_ALGORITHM};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -10,38 +10,80 @@ fn main() {
         process::exit(1);
     }
 
-    match args[1].as_str() {
+    // Parse: comprust <command> [-a algorithm] <input> <output>
+    let command = args[1].as_str();
+    let (algorithm, rest) = parse_algorithm_flag(&args[2..]);
+
+    match command {
         "encode" => {
-            if args.len() < 4 {
-                eprintln!("Usage: comprust encode <input-file> <output-file>");
+            if rest.len() < 2 {
+                eprintln!("Usage: comprust encode [-a algorithm] <input-file> <output-file>");
                 process::exit(1);
             }
-            cmd_encode(&args[2], &args[3]);
+            let codec = resolve_codec(&algorithm);
+            cmd_encode(codec.as_ref(), &rest[0], &rest[1]);
         }
         "decode" => {
-            if args.len() < 4 {
-                eprintln!("Usage: comprust decode <input-file> <output-file>");
+            if rest.len() < 2 {
+                eprintln!("Usage: comprust decode [-a algorithm] <input-file> <output-file>");
                 process::exit(1);
             }
-            cmd_decode(&args[2], &args[3]);
+            let codec = resolve_codec(&algorithm);
+            cmd_decode(codec.as_ref(), &rest[0], &rest[1]);
         }
         _ => {
-            eprintln!("Unknown command: {}", args[1]);
+            eprintln!("Unknown command: {}", command);
             print_usage();
             process::exit(1);
         }
     }
 }
 
-fn print_usage() {
-    eprintln!("Usage: comprust <command> <input-file> <output-file>");
-    eprintln!();
-    eprintln!("Commands:");
-    eprintln!("  encode    Compress a file using Huffman coding");
-    eprintln!("  decode    Decompress a previously compressed file");
+/// Extract `-a <name>` or `--algorithm <name>` from args, return the rest.
+fn parse_algorithm_flag(args: &[String]) -> (String, Vec<String>) {
+    let mut algorithm = DEFAULT_ALGORITHM.to_string();
+    let mut rest = Vec::new();
+    let mut iter = args.iter();
+
+    while let Some(arg) = iter.next() {
+        if arg == "-a" || arg == "--algorithm" {
+            match iter.next() {
+                Some(name) => algorithm = name.clone(),
+                None => {
+                    eprintln!("Missing value for {}", arg);
+                    process::exit(1);
+                }
+            }
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+
+    (algorithm, rest)
 }
 
-fn cmd_encode(input_path: &str, output_path: &str) {
+fn resolve_codec(name: &str) -> Box<dyn Codec> {
+    match codec::get_codec(name) {
+        Some(c) => c,
+        None => {
+            eprintln!("Unknown algorithm: '{}'. Available: huffman", name);
+            process::exit(1);
+        }
+    }
+}
+
+fn print_usage() {
+    eprintln!("Usage: comprust <command> [-a algorithm] <input-file> <output-file>");
+    eprintln!();
+    eprintln!("Commands:");
+    eprintln!("  encode    Compress a file");
+    eprintln!("  decode    Decompress a file");
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  -a, --algorithm <name>    Compression algorithm (default: huffman)");
+}
+
+fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
     let data = match fs::read(input_path) {
         Ok(d) => d,
         Err(e) => {
@@ -51,7 +93,7 @@ fn cmd_encode(input_path: &str, output_path: &str) {
     };
 
     let mut output = Vec::new();
-    let num_bits = match huffman::encode(&data, &mut output) {
+    let num_bits = match codec.encode(&data, &mut output) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to encode: {}", e);
@@ -70,7 +112,7 @@ fn cmd_encode(input_path: &str, output_path: &str) {
     println!("=> Written to: {}", output_path);
 }
 
-fn cmd_decode(input_path: &str, output_path: &str) {
+fn cmd_decode(codec: &dyn Codec, input_path: &str, output_path: &str) {
     let data = match fs::read(input_path) {
         Ok(d) => d,
         Err(e) => {
@@ -80,7 +122,7 @@ fn cmd_decode(input_path: &str, output_path: &str) {
     };
 
     let mut output = Vec::new();
-    let bytes_written = match huffman::decode(&mut data.as_slice(), &mut output) {
+    let bytes_written = match codec.decode(&mut data.as_slice(), &mut output) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to decode: {}", e);

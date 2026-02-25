@@ -3,13 +3,24 @@ use std::collections::HashMap;
 use std::io::{prelude::*, Result};
 
 mod tree;
-use crate::types::Serializable;
 
-use self::tree::{HuffmanTree, Link};
+use self::tree::{HuffmanTree, Link, Serializable};
+
+pub struct HuffmanCodec;
+
+impl crate::codec::Codec for HuffmanCodec {
+    fn encode(&self, data: &[u8], writer: &mut dyn Write) -> Result<u64> {
+        encode(data, writer)
+    }
+
+    fn decode(&self, reader: &mut dyn Read, writer: &mut dyn Write) -> Result<usize> {
+        decode(reader, writer)
+    }
+}
 
 // Encodes the data using Huffman coding and writes it into the writer.
 // Returns the number of bits in the compressed payload (excluding header/padding).
-pub fn encode<W: Write>(data: &[u8], writer: &mut W) -> Result<u64> {
+pub fn encode<W: Write + ?Sized>(data: &[u8], writer: &mut W) -> Result<u64> {
     let tree = HuffmanTree::build(data).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "cannot encode empty input")
     })?;
@@ -40,7 +51,7 @@ pub fn encode<W: Write>(data: &[u8], writer: &mut W) -> Result<u64> {
     Ok(num_bits as u64)
 }
 
-pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize> {
+pub fn decode<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut W) -> Result<usize> {
     // First read in the huffman tree
     let tree = HuffmanTree::deserialize(reader)?;
 

@@ -1,9 +1,15 @@
-use crate::types::Serializable;
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap},
     io::{Error, ErrorKind, Read, Result, Write},
 };
+
+pub trait Serializable {
+    fn serialize<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize>;
+    fn deserialize<R: Read + ?Sized>(reader: &mut R) -> Result<Self>
+    where
+        Self: Sized;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HuffmanTree {
@@ -49,7 +55,7 @@ impl HuffmanTree {
 }
 
 impl Serializable for HuffmanTree {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<usize> {
+    fn serialize<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize> {
         let mut bytes: Vec<u8> = self.counts.keys().copied().collect();
         bytes.sort();
         let counts: Vec<u32> = bytes.iter().map(|b| self.counts[b]).collect();
@@ -67,7 +73,7 @@ impl Serializable for HuffmanTree {
         Ok(4 + bytes.len() + counts.len() * 4)
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self>
+    fn deserialize<R: Read + ?Sized>(reader: &mut R) -> Result<Self>
     where
         Self: Sized,
     {
