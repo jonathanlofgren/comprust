@@ -16,6 +16,7 @@ pub trait Codec {
 pub fn get_codec(name: &str) -> Option<Box<dyn Codec>> {
     match name {
         "huffman" => Some(Box::new(crate::huffman::HuffmanCodec)),
+        "rle" => Some(Box::new(crate::rle::RleCodec)),
         _ => None,
     }
 }
