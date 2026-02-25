@@ -1,3 +1,4 @@
+use std::time::Instant;
 use std::{env, fs, process};
 
 use comprust::codec::{self, Codec, DEFAULT_ALGORITHM};
@@ -92,6 +93,7 @@ fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
         }
     };
 
+    let start = Instant::now();
     let mut output = Vec::new();
     let num_bits = match codec.encode(&data, &mut output) {
         Ok(n) => n,
@@ -100,15 +102,19 @@ fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
             process::exit(1);
         }
     };
+    let elapsed = start.elapsed();
 
     if let Err(e) = fs::write(output_path, &output) {
         eprintln!("Failed to write '{}': {}", output_path, e);
         process::exit(1);
     }
 
+    let ratio = output.len() as f64 / data.len() as f64;
     println!("=> Raw: {} bytes", data.len());
     println!("=> Compressed: {} bytes", output.len());
     println!("=> Compressed: {} bits", num_bits);
+    println!("=> Ratio: {:.2}%", ratio * 100.0);
+    println!("=> Time: {:.3?}", elapsed);
     println!("=> Written to: {}", output_path);
 }
 
@@ -121,6 +127,7 @@ fn cmd_decode(codec: &dyn Codec, input_path: &str, output_path: &str) {
         }
     };
 
+    let start = Instant::now();
     let mut output = Vec::new();
     let bytes_written = match codec.decode(&mut data.as_slice(), &mut output) {
         Ok(n) => n,
@@ -129,13 +136,17 @@ fn cmd_decode(codec: &dyn Codec, input_path: &str, output_path: &str) {
             process::exit(1);
         }
     };
+    let elapsed = start.elapsed();
 
     if let Err(e) = fs::write(output_path, &output) {
         eprintln!("Failed to write '{}': {}", output_path, e);
         process::exit(1);
     }
 
+    let ratio = data.len() as f64 / bytes_written as f64;
     println!("=> Compressed: {} bytes", data.len());
     println!("=> Restored: {} bytes", bytes_written);
+    println!("=> Ratio: {:.2}%", ratio * 100.0);
+    println!("=> Time: {:.3?}", elapsed);
     println!("=> Written to: {}", output_path);
 }
