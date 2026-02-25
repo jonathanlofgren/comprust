@@ -7,11 +7,12 @@ use crate::types::Serializable;
 
 use self::tree::{HuffmanTree, Link};
 
-// Encodes the text data using Huffman coding and writes it into the writer
-// Returns the number of bits
-// TODO: probably should return the number of bytes written instead
+// Encodes the text data using Huffman coding and writes it into the writer.
+// Returns the number of bits in the compressed payload (excluding header/padding).
 pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
-    let tree = HuffmanTree::build(text).expect("Failed to build huffman tree.");
+    let tree = HuffmanTree::build(text).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "cannot encode empty input")
+    })?;
     let dict = build_dictionary(&tree);
     let mut data = encode_with_dictionary(text, &dict);
 
@@ -26,7 +27,6 @@ pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
     data.extend(vec![true; pad]);
 
     // Convert the bitvec to bytes
-    // TODO: This is all in memory right now which is not good
     let mut buffer = vec![];
     data.read_to_end(&mut buffer)?;
 
@@ -34,7 +34,7 @@ pub fn encode<W: Write>(text: &str, writer: &mut W) -> Result<u64> {
     debug_assert!(data.is_empty());
 
     tree.serialize(writer)?;
-    writer.write_all(&[pad.try_into().unwrap()])?; //   First write how many useless bits were padded at the end
+    writer.write_all(&[pad as u8])?; //   First write how many useless bits were padded at the end
     writer.write_all(&buffer)?; //                      Then write the buffer
 
     Ok(num_bits as u64)
@@ -59,45 +59,36 @@ pub fn decode<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<usize
         BitVec::<_, Lsb0>::from_vec(buffer)
     };
 
-    // Then walk bit by bit and keep track of where we are
-    // As soon as we hit a leaf node
-    // Output that character to writer
-    // Make sure the padded 1-bits at the end to reach a full byte are ignored
+    // Walk bit by bit through the tree. Navigate on each bit, and whenever
+    // we land on a leaf, output that character and hop back to the root.
+    // Make sure the padded 1-bits at the end to reach a full byte are ignored.
     let num_data_bits = bits.len() - bits_padded;
     let mut current = &tree.root;
     let mut bytes_written: usize = 0;
+    let mut at_root = true;
 
     for b in &bits[0..num_data_bits] {
-        if let Link::Leaf(_, char) = current {
-            // We are at a leaf node, just output the character (as bytes)
-            bytes_written += write_char(writer, char)?;
-
-            // Hop back to the root of the tree
-            current = &tree.root;
+        match current {
+            Link::Node(node, _) => {
+                current = if *b { &node.right } else { &node.left };
+                at_root = false;
+            }
+            // Single-character alphabet: root is a leaf, each bit represents one character
+            Link::Leaf(_, _) => {}
         }
 
-        if let Link::Node(node, _) = current {
-            match *b {
-                // Go right
-                true => current = &node.right,
-                // Go left
-                false => current = &node.left,
-            }
+        if let Link::Leaf(_, ch) = current {
+            bytes_written += write_char(writer, ch)?;
+            current = &tree.root;
+            at_root = true;
         }
     }
 
-    // Now after the final bit we should be at a leaf,
-    // otherwise something is really wrong with the code
-    match current {
-        Link::Leaf(_, char) => {
-            bytes_written += write_char(writer, char)?;
-        }
-        Link::Node(_, _) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Unexpected end of data: stopped at internal node instead of leaf",
-            ));
-        }
+    if !at_root {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Unexpected end of data: stopped at internal node instead of leaf",
+        ));
     }
 
     Ok(bytes_written)
@@ -110,11 +101,8 @@ fn write_char<W: Write>(writer: &mut W, ch: &char) -> Result<usize> {
     Ok(bytes.len())
 }
 
-// TODO: return Vec<u8> instead
 fn encode_with_dictionary(text: &str, dict: &HashMap<char, BitVec>) -> BitVec {
-    let bits: BitVec = text.chars().flat_map(|c| dict[&c].clone()).collect();
-
-    bits
+    text.chars().flat_map(|c| dict[&c].clone()).collect()
 }
 
 /// Depth first search to find the codes for each leaf node
@@ -125,6 +113,9 @@ fn build_dictionary(tree: &HuffmanTree) -> HashMap<char, BitVec> {
     while let Some((link, code)) = frontier.pop() {
         match link {
             Link::Leaf(_, ch) => {
+                // If the root itself is a leaf (single unique character), assign
+                // a 1-bit code so each occurrence actually produces output.
+                let code = if code.is_empty() { bitvec![0] } else { code };
                 codes.insert(*ch, code);
             }
             Link::Node(node, _) => {
@@ -223,15 +214,27 @@ mod tests {
         let mut encode_buffer: Vec<u8> = Vec::new();
         let mut decode_buffer: Vec<u8> = Vec::new();
 
-        // Encode the test into encode_buffer
         encode(text, &mut encode_buffer).expect("Failed to encode");
-
-        // Decode back into the decode_buffer
         decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
 
         assert_eq!(
             String::from_utf8(decode_buffer)
                 .expect("Failed to create text data from decoded data, probably invalid utf8"),
+            text
+        );
+    }
+
+    #[test]
+    fn encodes_and_decodes_single_character_alphabet() {
+        let text = "aaa";
+        let mut encode_buffer: Vec<u8> = Vec::new();
+        let mut decode_buffer: Vec<u8> = Vec::new();
+
+        encode(text, &mut encode_buffer).expect("Failed to encode");
+        decode(&mut encode_buffer.as_slice(), &mut decode_buffer).expect("Failed to decode");
+
+        assert_eq!(
+            String::from_utf8(decode_buffer).expect("invalid utf8"),
             text
         );
     }
