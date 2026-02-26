@@ -102,10 +102,16 @@ impl Serializable for HuffmanTree {
 }
 
 fn count_bytes(source: &[u8]) -> HashMap<u8, u32> {
-    source.iter().fold(HashMap::new(), |mut map, &b| {
-        *map.entry(b).or_insert(0) += 1;
-        map
-    })
+    let mut counts = [0u32; 256];
+    for &b in source {
+        counts[b as usize] += 1;
+    }
+    counts
+        .iter()
+        .enumerate()
+        .filter(|(_, &c)| c > 0)
+        .map(|(b, &c)| (b as u8, c))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

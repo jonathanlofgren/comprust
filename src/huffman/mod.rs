@@ -107,7 +107,11 @@ pub fn decode<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut 
 }
 
 fn encode_with_dictionary(data: &[u8], dict: &HashMap<u8, BitVec>) -> BitVec {
-    data.iter().flat_map(|b| dict[b].clone()).collect()
+    let mut result = BitVec::with_capacity(data.len() * 5);
+    for &b in data {
+        result.extend_from_bitslice(&dict[&b]);
+    }
+    result
 }
 
 /// Depth first search to find the codes for each leaf node
