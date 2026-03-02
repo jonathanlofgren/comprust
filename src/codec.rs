@@ -8,7 +8,7 @@ use std::io::{self, Read, Write};
 /// 3. Implement this trait for it
 /// 4. Add a match arm in `get_codec` below
 pub trait Codec {
-    fn encode(&self, data: &[u8], writer: &mut dyn Write) -> io::Result<u64>;
+    fn encode(&self, reader: &mut dyn Read, writer: &mut dyn Write) -> io::Result<u64>;
     fn decode(&self, reader: &mut dyn Read, writer: &mut dyn Write) -> io::Result<usize>;
 }
 

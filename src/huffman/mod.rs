@@ -9,8 +9,10 @@ use self::tree::{HuffmanTree, Link, Serializable};
 pub struct HuffmanCodec;
 
 impl crate::codec::Codec for HuffmanCodec {
-    fn encode(&self, data: &[u8], writer: &mut dyn Write) -> Result<u64> {
-        encode(data, writer)
+    fn encode(&self, reader: &mut dyn Read, writer: &mut dyn Write) -> Result<u64> {
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data)?;
+        encode(&data, writer)
     }
 
     fn decode(&self, reader: &mut dyn Read, writer: &mut dyn Write) -> Result<usize> {
