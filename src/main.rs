@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::BufReader;
 use std::time::Instant;
 use std::{env, fs, process};
 
@@ -86,17 +88,25 @@ fn print_usage() {
 }
 
 fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
-    let data = match fs::read(input_path) {
-        Ok(d) => d,
+    let file = match File::open(input_path) {
+        Ok(f) => f,
         Err(e) => {
             eprintln!("Failed to read '{}': {}", input_path, e);
             process::exit(1);
         }
     };
+    let input_size = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(e) => {
+            eprintln!("Failed to read metadata for '{}': {}", input_path, e);
+            process::exit(1);
+        }
+    };
+    let mut reader = BufReader::new(file);
 
     let start = Instant::now();
     let mut output = Vec::new();
-    let num_bits = match codec.encode(&data, &mut output) {
+    let num_bits = match codec.encode(&mut reader, &mut output) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to encode: {}", e);
@@ -110,8 +120,8 @@ fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
         process::exit(1);
     }
 
-    let ratio = output.len() as f64 / data.len() as f64;
-    println!("=> Raw: {} bytes", data.len());
+    let ratio = output.len() as f64 / input_size as f64;
+    println!("=> Raw: {} bytes", input_size);
     println!("=> Compressed: {} bytes", output.len());
     println!("=> Compressed: {} bits", num_bits);
     println!("=> Ratio: {:.2}%", ratio * 100.0);
@@ -120,17 +130,25 @@ fn cmd_encode(codec: &dyn Codec, input_path: &str, output_path: &str) {
 }
 
 fn cmd_decode(codec: &dyn Codec, input_path: &str, output_path: &str) {
-    let data = match fs::read(input_path) {
-        Ok(d) => d,
+    let file = match File::open(input_path) {
+        Ok(f) => f,
         Err(e) => {
             eprintln!("Failed to read '{}': {}", input_path, e);
             process::exit(1);
         }
     };
+    let input_size = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(e) => {
+            eprintln!("Failed to read metadata for '{}': {}", input_path, e);
+            process::exit(1);
+        }
+    };
+    let mut reader = BufReader::new(file);
 
     let start = Instant::now();
     let mut output = Vec::new();
-    let bytes_written = match codec.decode(&mut data.as_slice(), &mut output) {
+    let bytes_written = match codec.decode(&mut reader, &mut output) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to decode: {}", e);
@@ -144,8 +162,8 @@ fn cmd_decode(codec: &dyn Codec, input_path: &str, output_path: &str) {
         process::exit(1);
     }
 
-    let ratio = data.len() as f64 / bytes_written as f64;
-    println!("=> Compressed: {} bytes", data.len());
+    let ratio = input_size as f64 / bytes_written as f64;
+    println!("=> Compressed: {} bytes", input_size);
     println!("=> Restored: {} bytes", bytes_written);
     println!("=> Ratio: {:.2}%", ratio * 100.0);
     println!("=> Time: {:.3?}", elapsed);
